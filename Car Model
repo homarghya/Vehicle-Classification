@@ -1,0 +1,289 @@
+databricks-logo Car Model(Python) Import Notebook
+blob_account_name = "busloyalty" # fill in your blob account name
+blob_account_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # fill in your blob account key
+mycontainer = "car"       # fill in the container name
+myblobname = "vechicles/"        # fill in the blob name
+#mydatafile = ""        # fill in the output file name
+
+import os # import OS dependant functionality
+import pandas as pd #import data analysis library required
+from azure.storage.blob import BlockBlobService
+import io
+from PIL import Image
+from keras.models import Sequential
+from keras.layers.core import Dense, Activation, Flatten, Dropout
+from keras.layers.convolutional import Convolution2D
+from keras.layers.pooling import MaxPooling2D
+from sklearn.utils import shuffle
+from sklearn.model_selection import train_test_split
+import numpy as np
+dirname = os.getcwd()
+
+blob_service = BlockBlobService(account_name=blob_account_name,
+             account_key=blob_account_key)
+generator = blob_service.list_blobs(mycontainer)
+#blob_service.get_blob_to_path(mycontainer, myblobname, mydatafile)
+
+#mydata = pd.read_csv(mydatafile, header = 0)
+#os.remove(os.path.join(dirname, mydatafile))
+#print(mydata.shape)
+data = []
+for i in generator:
+    if str(i.name).find(".png") != -1:
+        split_list =str(i.name).rsplit("/",1)
+        if str(i.name).find("non-vehicles") !=-1:
+            split_list.append(0)
+            data.append(split_list)
+        elif str(i.name).find("vehicles") !=-1:
+            split_list.append(1)
+            data.append(split_list)
+pd_data = shuffle(pd.DataFrame(data,columns=["container","file","label"]))
+train_data, val_data = train_test_split(
+    pd_data, test_size=0.2, random_state=10)
+train_data
+#create normalizing function to normailize augmented data set
+def min_max_normalization(x,min,max):
+    """
+    This function takes an n by m array and normalizes each value based on the average of min and max values
+    of the RBG scale (min=0 and max=255).
+    
+    It return an n by m array
+    """
+    image = np.array(x)
+    avg_value=(max+min)/2.0
+    norm_array = np.zeros(image.shape)+avg_value
+    normalized_x= (image-norm_array)/norm_array
+    #print(normalized_x.shape)
+    return normalized_x
+#used generator code from Behavioral cloning lesson
+from sklearn.utils import shuffle
+def generator(samples, batch_size=32):
+    num_samples = len(samples)
+    while 1: # Loop forever so the generator never terminates
+        shuffle(samples)
+        for offset in range(0, num_samples, batch_size):
+            batch_samples = samples[offset:offset+batch_size]
+
+            images = []
+            angles = []
+            for index, batch_sample in batch_samples.iterrows():
+                container = batch_sample[0]
+                file = batch_sample[1]
+                blob = blob_service.get_blob_to_bytes(mycontainer, container+"/"+file)
+                image_file_in_mem = io.BytesIO(blob.content)
+                center_image = min_max_normalization(Image.open(image_file_in_mem),0,255)
+                center_angle = batch_sample["label"]
+                images.append(center_image)
+                angles.append([1-center_angle,center_angle])
+                images.append(np.fliplr(center_image))
+                angles.append([1-center_angle,center_angle])
+
+            X_train = np.array(images)
+            y_train = np.array(angles)
+            yield shuffle(X_train, y_train)
+
+# compile and train the model using the generator function
+train_generator = generator(train_data, batch_size=20)
+validation_generator = generator(val_data, batch_size=20)
+model = Sequential()
+# TODO: Re-construct the network and add a convolutional layer before the flatten layer.
+# Create the Sequential model
+#convolutuonal layer with 10 layers and 3 by 3, 2x2 max pooling and activation
+model.add(Convolution2D(4, 3, 3, border_mode='valid', input_shape=(64, 64, 3)))
+model.add(MaxPooling2D((2,2)))
+model.add(Activation('relu'))
+
+#convolutuonal layer with 20 layers and 3 by 3, 2x2 max pooling and activation
+#model.add(Convolution2D(20, 3, 3, border_mode='valid'))
+#model.add(MaxPooling2D((2,2)))
+#model.add(Activation('relu'))
+
+#convolutuonal layer with 20 layers and 3 by 3, 2x2 max pooling and activation
+#model.add(Convolution2D(30, 3, 3, border_mode='valid'))
+#model.add(MaxPooling2D((2,2)))
+#model.add(Activation('relu'))
+
+#a flatten layer
+model.add(Flatten())
+
+#1st layer dense to 800, activation and 50% dropout
+#model.add(Dense(800))
+#model.add(Activation('relu'))
+#model.add(Dropout(0.5))
+
+#2nd layer dense to 500, activation and 50% dropout
+#model.add(Dense(500))
+#model.add(Activation('relu'))
+#model.add(Dropout(0.5))
+
+#3rd layer dense to 200, activation and 50% dropout
+#model.add(Dense(200))
+#model.add(Activation('relu'))
+#model.add(Dropout(0.5))
+
+#4th layer dense to 100, activation and 50% dropout
+#model.add(Dense(100))
+#model.add(Activation('relu'))
+#model.add(Dropout(0.5))
+
+#5th layer dense to 64, activation and 50% dropout
+model.add(Dense(64))
+model.add(Activation('relu'))
+model.add(Dropout(0.5))
+
+#6th layer dense to 32 and activation
+#model.add(Dense(32))
+#model.add(Activation('relu'))
+
+#7th layer dense to 16 and activation
+model.add(Dense(16))
+model.add(Activation('relu'))
+
+#8th layer dense to 1 for regression output
+model.add(Dense(2))
+model.add(Activation('softmax'))
+model.summary()
+#use adam optimizer and mean squared error as loss function and output mean absolute error as secondary measure
+model.compile('adam', 'categorical_crossentropy', ['accuracy'])
+#this line of code is taken from the behavioral learning lesson
+model.fit_generator(train_generator, samples_per_epoch= len(train_data)*2, validation_data=validation_generator, nb_val_samples=len(val_data)*2, nb_epoch=1)
+#save model
+model.save("car_model.h5")
+import os # import OS dependant functionality
+import pandas as pd #import data analysis library required
+#from azure.storage.blob import BlockBlobService
+import io
+from PIL import Image
+from keras.models import Sequential
+from keras.layers.core import Dense, Activation, Flatten, Dropout
+from keras.layers.convolutional import Convolution2D
+from keras.layers.pooling import MaxPooling2D
+from sklearn.utils import shuffle
+from sklearn.model_selection import train_test_split
+import numpy as np
+from keras.models import load_model
+model = load_model('/dbfs/FileStore/tables/car_model.h5')
+Using TensorFlow backend.
+#create normalizing function to normailize augmented data set
+def min_max_normalization(x,min,max):
+    """
+    This function takes an n by m array and normalizes each value based on the average of min and max values
+    of the RBG scale (min=0 and max=255).
+    
+    It return an n by m array
+    """
+    image = np.array(x)
+    avg_value=(max+min)/2.0
+    norm_array = np.zeros(image.shape)+avg_value
+    normalized_x= (image-norm_array)/norm_array
+    #print(normalized_x.shape)
+    return normalized_x
+def get_sample_url_images(urls):
+    original_image = []
+    normalized_image = []
+    for url in urls:
+        response = requests.get(url)
+        image = Image.open(io.BytesIO(response.content))
+        original_image.append(image)
+        array_img=min_max_normalization(image.resize((64,64),resample=Image.BILINEAR),0,255)
+        normalized_image.append(array_img)
+    return (original_image, np.array(normalized_image))
+import requests
+urls = ["https://img.buzzfeed.com/buzzfeed-static/static/2014-10/28/23/campaign_images/webdr02/33-awesome-facts-about-dogs-2-1561-1414553390-14_dblbig.jpg",
+    "https://medias.fcacanada.ca//sites/brand/ramtruck/images/2018-ram-3500-nav_2bea4c2427f8dc1f09ce7783aac76612-retina.jpg",
+    "https://ichef.bbci.co.uk/news/660/cpsprodpb/9504/production/_100284183_hi044452539.jpg",
+    "https://www.thewrap.com/wp-content/uploads/2017/01/homer-simpsons-car.jpg",
+    "https://media.wired.com/photos/593252a1edfced5820d0fa07/master/w_660,c_limit/the-homer-inline4.jpg",
+    "https://www.motoringresearch.com/wp-content/uploads/2018/02/Original_Batmobile_01.jpg",
+    "https://cdn.britannica.com/s:300x300/26/162626-004-C076EDBD.jpg",
+    "https://www.bavariayachts.com/fileadmin/_processed_/e/6/csm_bavaria-mb-overview-rline_1e89db9409.jpg",
+    "https://cdn1.medicalnewstoday.com/content/images/articles/322/322868/golden-retriever-puppy.jpg",
+    "https://cdntdreditorials.azureedge.net/cache/9/9/b/4/4/4/99b444a6cf8ce2759b63265488ca53aee40462b7.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/2017_Mazda3_%28BN%29_SP25_GT_sedan_%282018-08-06%29.jpg/1200px-2017_Mazda3_%28BN%29_SP25_GT_sedan_%282018-08-06%29.jpg",
+    "https://media.mnn.com/assets/images/2017/01/cow-in-pasture.jpg.838x0_q80.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Kangaroo_and_joey03.jpg/220px-Kangaroo_and_joey03.jpg",
+    "https://ccmarketplace.azureedge.net/cc-temp/listing/113/9288/13327182-1934-ford-coupe-thumb.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/2012_Buick_Verano_--_04-30-2012.JPG/280px-2012_Buick_Verano_--_04-30-2012.JPG",
+      "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT-DFm3qu5EDu-LhVUoXh3V3-W2JrkAMOL5VxS68GBOyhS-hBgH",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/VW_1302_%282013-09-15_2307_Spu%29.JPG/1200px-VW_1302_%282013-09-15_2307_Spu%29.JPG",
+      "https://img2.cgtrader.com/items/36629/2ef84e6a0c/green-leaf-shrub-3d-model-obj.jpg",
+       "http://soappotions.com/wp-content/uploads/2017/10/orange.jpg",
+       "http://www.nhm.ac.uk/content/dam/nhmwww/discover/megalodon/megalodon_warpaint_shutterstock-full-width.jpg/_jcr_content/renditions/cq5dam.web.768.768.jpeg",
+       "https://preview.thenewsmarket.com/Previews/lamb/StillAssets/800x600/526140_v2.JPEG",
+       "https://i.ytimg.com/vi/8sUth7fwOi0/maxresdefault.jpg",
+       "https://icdn6.themanual.com/image/themanual/cruiser-harley-davison-low-rider-crop-800x800.jpg",
+       "https://cdn.shopify.com/s/files/1/2352/6327/products/50cc_super_moped_blue_1024x1024.jpg",
+       "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Can-Am_Spyder_RSS_%2802%29.jpg/300px-Can-Am_Spyder_RSS_%2802%29.jpg",
+       "http://www.barcoproducts.ca/media/catalog/product/cache/19/thumbnail/630x375/9df78eab33525d08d6e5fb8d27136e95/g/t/gtb600_cd.jpg",
+       ]
+images, array_images = get_sample_url_images(urls)
+predictions = np.round(model.predict(array_images),2)
+dbutils.fs.rm("dbfs:/pepar/car_demo/images/", recurse=True)
+dbutils.fs.mkdirs("dbfs:/pepar/car_demo/images/")
+Out[5]: True
+#from PIL import ImageFont
+from PIL import ImageDraw
+from PIL import ImageFont
+from PIL import ImageOps
+import matplotlib.pyplot as plt
+#from IPython.display import display
+#%matplotlib inline
+for i,img in enumerate(images):
+    #img = Image.open("sample_in.jpg")
+    width, height = img.size
+    
+    draw = ImageDraw.Draw(img)
+    ratio = float(48)/400.
+    font_size = int(ratio*height) 
+    
+    # font = ImageFont.truetype(<font-file>, <font-size>)
+    #font = ImageFont.load("arial.pil")
+    font = ImageFont.truetype("/dbfs/FileStore/tables/arial.ttf", font_size)
+    # draw.text((x, y),"Sample Text",(r,g,b))
+    #plt.figure()
+    if predictions[i][0]<0.5:
+        center = round(width/2.0,0)-font_size
+        draw.text((0, height - font_size),"P="+str(predictions[i][1]),(0,255,0), font=font)
+        draw.text((center, 0),"Car",(0,255,0), font=font)
+        result=ImageOps.expand(img, border = int(height*0.1),fill="green")
+        result.save("/dbfs/pepar/car_demo/images/fig"+str(i)+".bmp")
+    else:
+        center = round(width/2.0,0)-font_size*2
+        draw.text((0,  height - font_size),"P="+str(predictions[i][0]),(255,0,0), font=font)
+        draw.text((center, 0),"Not Car",(255,0,0),font=font)
+        result=ImageOps.expand(img, border = int(height*0.1),fill="red")
+        result.save("/dbfs/pepar/car_demo/images/fig"+str(i)+".bmp")
+
+from pyspark.ml.image import ImageSchema
+sample_batches = ImageSchema.readImages("dbfs:/pepar/car_demo/images/")
+
+display(sample_batches)
+image
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   Show image preview 
+Detected data types for which enhanced rendering is supported. For details, see the Databricks Guide.
